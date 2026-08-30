@@ -25,15 +25,22 @@
 
 #define batteryPin 34 // ADC pin for battery voltage measurement
 
-constexpr int32_t steeringDriveMix = 30; // Steering drive mix factor, range: 0-100. 0 = no steering, 100 = full steering
+constexpr int32_t steeringDriveMix = 25; // Steering drive mix factor, range: 0-100. 0 = no steering, 100 = full steering
+constexpr int32_t stickDeadZone = 20;
+constexpr int32_t triggerDeadZone = 20;
+constexpr int32_t triggerMaxValue = 1023;
 
 
 constexpr int32_t minBatteryVoltage = 6600; // Minimum battery voltage in millivolts (6,6V = 2S LiPo fully discharged)
 constexpr int32_t warnBatteryVoltage = 7000; // Warning battery voltage in millivolts (7,0V = 2S LiPo low warning threshold)
 
-int8_t rightMotorReverse = 0;
-int8_t leftMotorReverse = 0;
-int8_t armMotorReverse = 1;
+constexpr bool leftMotorReversed = false; // Set to true if the left motor is reversed
+constexpr bool rightMotorReversed = false; // Set to true if the right motor is reversed
+constexpr bool armMotorReversed = false; // Set to true if the arm motor is reversed
+
+constexpr bool torqueVectoringReversed = false; // Set to true if the torque vectoring is reversed
+constexpr bool steeringServoReversed = true; // Set to true if the steering servo is reversed
+
 Cdrv8833 rightMotor;
 Cdrv8833 leftMotor;
 Cdrv8833 armMotor;
@@ -110,30 +117,66 @@ void onDisconnectedController(ControllerPtr ctl) {
 }
 
 void processGamepad(ControllerPtr ctl) {
-  int LXValue = ctl->axisX();
-  int LYValue = ctl->axisY();
+  int32_t steeringValue = ctl->axisRX();
+  int32_t throttleValue = ctl->axisY();
+  int32_t forwardTriggerValue = ctl->throttle();
+  int32_t reverseTriggerValue = ctl->brake();
 
-  if (abs(LXValue) > 20 || abs(LYValue) > 20)
-  {
-    int8_t driveInput = -map(LYValue, -512, 511, -100, 100);
-    int8_t steeringInput = map(LXValue, -512, 511, -steeringDriveMix, steeringDriveMix);
-
-    int8_t leftMotorSpeed = max(min(driveInput - steeringInput, 100), -100);
-    int8_t rightMotorSpeed = max(min(driveInput + steeringInput, 100), -100);
-
-    int16_t steeringServoValue = map(LXValue, -512, 511, steeringServoMin, steeringServoMax);
-
-    leftMotor.move(leftMotorSpeed);
-    rightMotor.move(rightMotorSpeed);
-    steeringServoWrite(steeringServoValue);
+  int32_t driveInput = 0;
+  if (abs(throttleValue) > stickDeadZone) {
+    driveInput = map(throttleValue, -512, 511, -100, 100);
   }
-  else
-  {
-    // Stick centered, stop movement
+
+  if (forwardTriggerValue > triggerDeadZone || reverseTriggerValue > triggerDeadZone) {
+    if (forwardTriggerValue >= reverseTriggerValue) {
+      driveInput = map(forwardTriggerValue, triggerDeadZone, triggerMaxValue, 0, -100);
+    } else {
+      driveInput = map(reverseTriggerValue, triggerDeadZone, triggerMaxValue, 0, 100);
+    }
+  }
+
+  int32_t steeringInput = 0;
+  if (abs(steeringValue) > stickDeadZone) {
+    steeringInput = map(steeringValue, -512, 511, -steeringDriveMix, steeringDriveMix);
+  }
+
+  if (torqueVectoringReversed) {
+    steeringInput = -steeringInput;
+  }
+
+  if (abs(driveInput) < stickDeadZone) {
+    steeringInput = 0;
+  }
+
+
+  steeringInput = (steeringInput * driveInput) / 100;
+
+  int8_t leftMotorSpeed = constrain(driveInput - steeringInput, -100, 100);
+  int8_t rightMotorSpeed = constrain(driveInput + steeringInput, -100, 100);
+
+  int16_t steeringServoValue = (steeringServoMax + steeringServoMin) / 2;
+  if (abs(steeringValue) > stickDeadZone) {
+    steeringServoValue = map(steeringValue, -512, 511, steeringServoMin, steeringServoMax);
+    if (steeringServoReversed) {
+      steeringServoValue = map(steeringValue, -512, 511, steeringServoMax, steeringServoMin);
+    }
+  }
+
+  if (leftMotorReversed) {
+    leftMotorSpeed = -leftMotorSpeed;
+  }
+  if (rightMotorReversed) {
+    rightMotorSpeed = -rightMotorSpeed;
+  }
+
+  if (driveInput == 0) {
     rightMotor.stop();
     leftMotor.stop();
-    steeringServoWrite((steeringServoMax + steeringServoMin) / 2); // Center the steering servo
+  } else {
+    leftMotor.move(leftMotorSpeed);
+    rightMotor.move(rightMotorSpeed);
   }
+  steeringServoWrite(steeringServoValue);
 
   if (ctl->a()) {
     shouldWiggle = true;
@@ -230,8 +273,7 @@ void setup() {
   ledcAttachPin(steeringServoPin, 0);
   ledcAttachPin(clawServoPin, 1);
 
-  bucketServoWrite(bucketServoValue);
-  clawServoWrite(clawServoValue);
+  steeringServoWrite((steeringServoMax + steeringServoMin) / 2); // Center the steering servo
 
   pinMode(batteryPin, ANALOG); // Set up battery pin as analog input
 
@@ -300,25 +342,17 @@ void loop() {
       Serial.printf("Warning: Battery voltage is low (%d mV), consider recharging.\n", batteryVolts);
     }
   }
-
-  if (currentTime % 10 == 0)
+  else
   {
-    constexpr int tmpMultiplier = 100; // For converting servo values to 1/100 microseconds
-
-    static int tmpBucketServoValue = steeringServoMax;
-    static int tmpClawServoValue = clawServoMax;
-    // Update bucket and claw servo values based on speed
-    tmpBucketServoValue += bucketServoSpeed;
-    tmpBucketServoValue = constrain(tmpBucketServoValue, bucketServoMin * tmpMultiplier, steeringServoMax * tmpMultiplier);
-
-    tmpClawServoValue += clawServoSpeed;
-    tmpClawServoValue = constrain(tmpClawServoValue, clawServoMin * tmpMultiplier, clawServoMax * tmpMultiplier);
-    // Write the updated values to the servos
-    bucketServoValue = tmpBucketServoValue / tmpMultiplier;
-    clawServoValue = tmpClawServoValue / tmpMultiplier;
-    bucketServoValue = constrain(bucketServoValue, bucketServoMin, steeringServoMax);
-    clawServoValue = constrain(clawServoValue, clawServoMin, clawServoMax);
-    bucketServoWrite(bucketServoValue);
-    clawServoWrite(clawServoValue);
+    if (auxLightsOn)
+    {
+      digitalWrite(auxLights0, HIGH);
+      digitalWrite(auxLights1, HIGH);
+    }
+    else
+    {
+      digitalWrite(auxLights0, LOW);
+      digitalWrite(auxLights1, LOW);
+    }
   }
 }
