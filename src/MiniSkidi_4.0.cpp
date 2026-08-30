@@ -17,7 +17,7 @@
 #define armMotor1 19
 #define armMotor1Dir HIGH
 
-#define bucketServoPin 23
+#define steeringServoPin 23
 #define clawServoPin 22
 
 #define auxLights0 16
@@ -25,27 +25,26 @@
 
 #define batteryPin 34 // ADC pin for battery voltage measurement
 
+constexpr int32_t steeringDriveMix = 30; // Steering drive mix factor, range: 0-100. 0 = no steering, 100 = full steering
+
 
 constexpr int32_t minBatteryVoltage = 6600; // Minimum battery voltage in millivolts (6,6V = 2S LiPo fully discharged)
 constexpr int32_t warnBatteryVoltage = 7000; // Warning battery voltage in millivolts (7,0V = 2S LiPo low warning threshold)
 
-int8_t rightMotorReverse = 1;
-int8_t leftMotorReverse = 1;
+int8_t rightMotorReverse = 0;
+int8_t leftMotorReverse = 0;
 int8_t armMotorReverse = 1;
 Cdrv8833 rightMotor;
 Cdrv8833 leftMotor;
 Cdrv8833 armMotor;
 
 
-constexpr int bucketServoMax = 2000;  // Maximum pulse width for bucket servo in microseconds
-constexpr int bucketServoMin = 1000;  // Minimum pulse width for bucket servo in microseconds
-int bucketServoSpeed = 0;  // Speed for bucket servo, can be adjusted based on input
-int bucketServoValue = bucketServoMax;  // Initial value for bucket servo
+constexpr int steeringServoMax = 1800; // Maximum pulse width for steering servo in microseconds
+constexpr int steeringServoMin = 1200;  // Minimum pulse width for steering servo in microseconds
 
 constexpr int clawServoMax = 2000;    // Maximum pulse width for claw servo in microseconds
 constexpr int clawServoMin = 1000;   // Minimum pulse width for claw servo in microseconds
-int clawServoSpeed = 0;  // Speed for claw servo, can be adjusted based on input
-int clawServoValue = clawServoMin;    // Initial value for claw servo
+
 
 volatile bool auxLightsOn = true;
 
@@ -58,12 +57,12 @@ volatile bool yPressed = false;
 
 ControllerPtr controller;
 
-void bucketServoWrite(int value) {
+void steeringServoWrite(int value) {
   // Convert the value to a range suitable for the servo
   int servoValue = map(value, 0, 20000, 0, 65535); // 20000 is the max pulse width in microseconds for 50Hz PWM
   // Ensure the value is within the range of 0 to 65535 for 16-bit PWM
   servoValue = constrain(servoValue, 0, 65535);
-  // Write the value to the LEDC channel for the bucket servo
+  // Write the value to the LEDC channel for the steering servo
   ledcWrite(0, servoValue);
 }
 
@@ -100,10 +99,8 @@ void onDisconnectedController(ControllerPtr ctl) {
     rightMotor.stop();
     leftMotor.stop();
     armMotor.stop();
-    bucketServoSpeed = 0;
-    clawServoSpeed = 0;
-    bucketServoWrite(bucketServoValue);
-    clawServoWrite(clawServoValue);
+    steeringServoWrite(steeringServoMax);
+    clawServoWrite(clawServoMin);
     digitalWrite(auxLights0, LOW);
     digitalWrite(auxLights1, LOW);
   } else {
@@ -119,45 +116,23 @@ void processGamepad(ControllerPtr ctl) {
   if (abs(LXValue) > 20 || abs(LYValue) > 20)
   {
     int8_t driveInput = -map(LYValue, -512, 511, -100, 100);
-    int8_t steeringInput = map(LXValue, -512, 511, -100, 100);
+    int8_t steeringInput = map(LXValue, -512, 511, -steeringDriveMix, steeringDriveMix);
 
     int8_t leftMotorSpeed = max(min(driveInput - steeringInput, 100), -100);
     int8_t rightMotorSpeed = max(min(driveInput + steeringInput, 100), -100);
 
+    int16_t steeringServoValue = map(LXValue, -512, 511, steeringServoMin, steeringServoMax);
+
     leftMotor.move(leftMotorSpeed);
     rightMotor.move(rightMotorSpeed);
+    steeringServoWrite(steeringServoValue);
   }
   else
   {
     // Stick centered, stop movement
     rightMotor.stop();
     leftMotor.stop();
-  }
-
-  int RYValue = (ctl->axisRY());
-  if (abs(RYValue) > 20) {
-    int8_t armSpeed = map(RYValue, -512, 511, -100, 100);
-    armMotor.move(armSpeed);
-  }
-  else{
-    armMotor.stop();
-  }
-
-  int RXValue = (ctl->axisRX());
-  if (abs(RXValue) > 20) {
-    bucketServoSpeed = map(RXValue, -512, 511, -100, 100);
-  }
-  else {
-    bucketServoSpeed = 0;
-  }
-
-  int ThrottleValue = ctl->throttle();
-  int BrakeValue = ctl->brake();
-  if (abs(ThrottleValue) > 20 || abs(BrakeValue) > 20) {
-    clawServoSpeed = map(ThrottleValue, 0, 1024, 0, 100) - map(BrakeValue, 0, 1024, 0, 100);
-  }
-  else {
-    clawServoSpeed = 0;
+    steeringServoWrite((steeringServoMax + steeringServoMin) / 2); // Center the steering servo
   }
 
   if (ctl->a()) {
@@ -247,12 +222,12 @@ void setup() {
   digitalWrite(auxLights0, HIGH);
   digitalWrite(auxLights1, HIGH);
 
-  pinMode(bucketServoPin, OUTPUT);
+  pinMode(steeringServoPin, OUTPUT);
   pinMode(clawServoPin, OUTPUT);
   ledcSetup(0, 50, 16); // Set up PWM for servos
   ledcSetup(1, 50, 16); // Set up PWM for servos
 
-  ledcAttachPin(bucketServoPin, 0);
+  ledcAttachPin(steeringServoPin, 0);
   ledcAttachPin(clawServoPin, 1);
 
   bucketServoWrite(bucketServoValue);
@@ -319,8 +294,6 @@ void loop() {
       rightMotor.stop();
       leftMotor.stop();
       armMotor.stop();
-      bucketServoSpeed = 0;
-      clawServoSpeed = 0;
     }
     else if (currentTime % 500 == 0)
     {
@@ -332,18 +305,18 @@ void loop() {
   {
     constexpr int tmpMultiplier = 100; // For converting servo values to 1/100 microseconds
 
-    static int tmpBucketServoValue = bucketServoMax;
+    static int tmpBucketServoValue = steeringServoMax;
     static int tmpClawServoValue = clawServoMax;
     // Update bucket and claw servo values based on speed
     tmpBucketServoValue += bucketServoSpeed;
-    tmpBucketServoValue = constrain(tmpBucketServoValue, bucketServoMin * tmpMultiplier, bucketServoMax * tmpMultiplier);
+    tmpBucketServoValue = constrain(tmpBucketServoValue, bucketServoMin * tmpMultiplier, steeringServoMax * tmpMultiplier);
 
     tmpClawServoValue += clawServoSpeed;
     tmpClawServoValue = constrain(tmpClawServoValue, clawServoMin * tmpMultiplier, clawServoMax * tmpMultiplier);
     // Write the updated values to the servos
     bucketServoValue = tmpBucketServoValue / tmpMultiplier;
     clawServoValue = tmpClawServoValue / tmpMultiplier;
-    bucketServoValue = constrain(bucketServoValue, bucketServoMin, bucketServoMax);
+    bucketServoValue = constrain(bucketServoValue, bucketServoMin, steeringServoMax);
     clawServoValue = constrain(clawServoValue, clawServoMin, clawServoMax);
     bucketServoWrite(bucketServoValue);
     clawServoWrite(clawServoValue);
