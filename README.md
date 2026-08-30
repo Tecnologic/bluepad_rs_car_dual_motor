@@ -1,6 +1,2 @@
 # Summary
-
-This repository includes code for 3d printable skid steer model available at https://www.printables.com/model/917948-3d-printed-rc-skidsteer-v40.
-
-
-![IMG_3947](https://github.com/Le0Michine/MiniSkidi-V4/assets/2707008/762304bf-d1e7-49a4-ac41-ce67f41d6aca)
+Based on MiniSkiddy from Prof. Boots software. changed for an rc car using 2 n10 motors in the rear axle and one steering servo in the front axle. The code is written in C++ and uses the Arduino framework. The code is designed to control the car using a gamepad.
