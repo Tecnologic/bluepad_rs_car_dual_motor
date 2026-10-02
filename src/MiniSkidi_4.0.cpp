@@ -46,21 +46,24 @@ Cdrv8833 leftMotor;
 Cdrv8833 armMotor;
 
 
-constexpr int steeringServoMax = 1800; // Maximum pulse width for steering servo in microseconds
-constexpr int steeringServoMin = 1200;  // Minimum pulse width for steering servo in microseconds
+constexpr int steeringServoMax = 1650; // Maximum pulse width for steering servo in microseconds
+constexpr int steeringServoMin = 1350;  // Minimum pulse width for steering servo in microseconds
 
 constexpr int clawServoMax = 2000;    // Maximum pulse width for claw servo in microseconds
 constexpr int clawServoMin = 1000;   // Minimum pulse width for claw servo in microseconds
 
 
-volatile bool auxLightsOn = true;
+bool auxLightsOn = true;
+bool turnLightsLeftOn = false;
+bool turnLightsRightOn = false;
 
-volatile unsigned long lastWiggleTime = 0;
-volatile int wiggleCount = 0;
-volatile int wiggleDirection = 1;
+
+unsigned long lastWiggleTime = 0;
+int wiggleCount = 0;
+int wiggleDirection = 1;
 unsigned long wiggleDelay = 100;
-volatile bool shouldWiggle = false;
-volatile bool yPressed = false;
+bool shouldWiggle = false;
+bool yPressed = false;
 
 ControllerPtr controller;
 
@@ -94,6 +97,9 @@ void onConnectedController(ControllerPtr ctl) {
     shouldWiggle = true;
     ctl->playDualRumble(0 /* delayedStartMs */, 250 /* durationMs */, 0x80 /* weakMagnitude */, 0x40 /* strongMagnitude */);
 
+    // here the steering servo power is attached 
+    armMotor.move(100);
+
   } else {
     Serial.println("CALLBACK: Controller connected, but could not found empty slot");
   }
@@ -121,6 +127,9 @@ void processGamepad(ControllerPtr ctl) {
   int32_t throttleValue = ctl->axisY();
   int32_t forwardTriggerValue = ctl->throttle();
   int32_t reverseTriggerValue = ctl->brake();
+
+
+  Serial.println("RX: " + String(steeringValue) + ", Y: " + String(throttleValue) + ", Throttle: " + String(forwardTriggerValue) + ", Brake: " + String(reverseTriggerValue));
 
   int32_t driveInput = 0;
   if (abs(throttleValue) > stickDeadZone) {
@@ -156,6 +165,15 @@ void processGamepad(ControllerPtr ctl) {
 
   int16_t steeringServoValue = (steeringServoMax + steeringServoMin) / 2;
   if (abs(steeringValue) > stickDeadZone) {
+
+    if (steeringValue > 0) {
+      turnLightsLeftOn = false;
+      turnLightsRightOn = true;
+    } else {
+      turnLightsLeftOn = true;
+      turnLightsRightOn = false;
+    }
+
     steeringServoValue = map(steeringValue, -512, 511, steeringServoMin, steeringServoMax);
     if (steeringServoReversed) {
       steeringServoValue = map(steeringValue, -512, 511, steeringServoMax, steeringServoMin);
@@ -176,6 +194,8 @@ void processGamepad(ControllerPtr ctl) {
     leftMotor.move(leftMotorSpeed);
     rightMotor.move(rightMotorSpeed);
   }
+
+
   steeringServoWrite(steeringServoValue);
 
   if (ctl->a()) {
@@ -188,14 +208,10 @@ void processGamepad(ControllerPtr ctl) {
 
     if (!auxLightsOn)
     {
-      digitalWrite(auxLights0, HIGH);
-      digitalWrite(auxLights1, HIGH);
       auxLightsOn = true;
     }
     else
     {
-      digitalWrite(auxLights0, LOW);
-      digitalWrite(auxLights1, LOW);
       auxLightsOn = false;
     }
   } else if (!ctl->y() && yPressed) {
@@ -237,7 +253,6 @@ int32_t readBatteryVoltage()
 
 void setup() {
 
-  
   Serial.begin(115200);
   Serial.setDebugOutput(true);
 
@@ -259,6 +274,11 @@ void setup() {
   armMotor.init(armMotor0, armMotor1, 7);
   armMotor.setDecayMode(drv8833DecaySlow);
 
+  rightMotor.stop();
+  leftMotor.stop();
+  armMotor.stop();
+
+
   pinMode(auxLights0, OUTPUT);
   pinMode(auxLights1, OUTPUT);
   
@@ -271,7 +291,7 @@ void setup() {
   ledcSetup(1, 50, 16); // Set up PWM for servos
 
   ledcAttachPin(steeringServoPin, 0);
-  ledcAttachPin(clawServoPin, 1);
+  //ledcAttachPin(clawServoPin, 1);
 
   steeringServoWrite((steeringServoMax + steeringServoMin) / 2); // Center the steering servo
 
@@ -344,15 +364,33 @@ void loop() {
   }
   else
   {
-    if (auxLightsOn)
-    {
+    static bool lastAuxLightsOn = false;
+    if (auxLightsOn != lastAuxLightsOn) {
+      lastAuxLightsOn = auxLightsOn;
+      Serial.printf("Aux lights turned %s\n", auxLightsOn ? "ON" : "OFF");
+    }
+
+    if (auxLightsOn) {
       digitalWrite(auxLights0, HIGH);
       digitalWrite(auxLights1, HIGH);
-    }
-    else
-    {
+    } else {
       digitalWrite(auxLights0, LOW);
       digitalWrite(auxLights1, LOW);
+    }
+
+    if (currentTime % 500 == 0)
+    {
+      static bool lastTurnLightsLeftOn = false;
+      static bool lastTurnLightsRightOn = false;
+
+      if (turnLightsLeftOn != lastTurnLightsLeftOn) {
+        digitalWrite(auxLights0, turnLightsLeftOn ? HIGH : LOW);
+        lastTurnLightsLeftOn = turnLightsLeftOn;
+      }
+      if (turnLightsRightOn != lastTurnLightsRightOn) {
+        digitalWrite(auxLights1, turnLightsRightOn ? HIGH : LOW);
+        lastTurnLightsRightOn = turnLightsRightOn;
+      }
     }
   }
 }
