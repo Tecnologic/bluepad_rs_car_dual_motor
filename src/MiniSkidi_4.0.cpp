@@ -46,8 +46,8 @@ Cdrv8833 leftMotor;
 Cdrv8833 armMotor;
 
 
-constexpr int steeringServoMax = 1650; // Maximum pulse width for steering servo in microseconds
-constexpr int steeringServoMin = 1350;  // Minimum pulse width for steering servo in microseconds
+constexpr int steeringServoMax = 1600; // Maximum pulse width for steering servo in microseconds
+constexpr int steeringServoMin = 1250;  // Minimum pulse width for steering servo in microseconds
 
 constexpr int clawServoMax = 2000;    // Maximum pulse width for claw servo in microseconds
 constexpr int clawServoMin = 1000;   // Minimum pulse width for claw servo in microseconds
